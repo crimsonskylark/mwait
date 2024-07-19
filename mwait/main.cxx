@@ -32,6 +32,9 @@ VOID Monitor( _In_ VOID *Context )
 
     NT_ASSERT( KeGetCurrentProcessorNumber( ) != mw::MONITOR_THREAD_CPU_AFFINITY );
 
+    ULONG64 CountIdentifiedWrites = 0llu;
+    ULONG64 CountCFSet = 0llu;
+
     for ( ;; )
     {
         volatile INTERRUPT_GUARD _ { };
@@ -78,13 +81,34 @@ VOID Monitor( _In_ VOID *Context )
          *  the wait to expire. Due to this fact, we have to manually check whether the store occurred or not.
          *
          *  This implementation does not account for the fact that the same value may have been written to the monitored address.
+         *
+         *  I've only tested the previous assumptions on an AMD Ryzen 3 systems.
+         *
+         *  Interestingly, Intel with the instruction `umwait`, appears to behave differently:
+         *
+         *  "By executing the umwait instruction, the core enters a light-weight sleep
+         *  mode, typically C0.1 or C0.2 [34]. There are now two cases
+         *  to distinguish: Core #X transiently writing or not writing to
+         *  the monitored cache line. If Core #X transiently writes to the
+         *  monitored shared cache line, Core #Y wakes up and contin-
+         *  ues execution with a cleared carry flag (CF = 0). If Core #X
+         *  does not write to the monitored shared cache line, Core #Y
+         *  sleeps until the maximum sleep time defined by the OS is
+         *  reached (cf. Section 3.3). In this case, the carry flag is set (CF
+         *  = 1) when Core #Y wakes up. Hence, with the carry flag, an
+         *  attacker has the architectural information whether there was
+         *  a microarchitectural event, i.e., a transient write."
          */
 
+        const auto cf = ( __readeflags ( ) & 1 ) != 0;
         const ULONG64 Previous = MostRecentRead;
         MostRecentRead = *reinterpret_cast< ULONG_PTR* >( Address );
 
+        if ( cf ) CountCFSet++;
+
         if ( Previous != MostRecentRead )
         {
+            CountIdentifiedWrites++;
             logmsg( "[%lx] Store detected on %p: 0x%llx != 0x%llx | delta: %llu\n",
                     KeGetCurrentProcessorNumber( ),
                     Address,
@@ -100,6 +124,8 @@ VOID Monitor( _In_ VOID *Context )
             break;
         }
     }
+
+    logmsg( "Count identified writes: %llu Count CF: %llu\n", CountIdentifiedWrites, CountCFSet );
 }
 
 
