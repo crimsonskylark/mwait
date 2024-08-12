@@ -15,12 +15,6 @@ struct INTERRUPT_GUARD
 
 VOID Monitor( _In_ VOID *Context )
 {
-    const auto Address = static_cast< mw::MONITOR_CONTEXT* >(
-        Context
-    )->MonitoredAddress;
-
-    logmsg( "Monitoring address %p for writes.\n", Address );
-
     ULONG64 MostRecentRead = 0llu;
 
     /*
@@ -33,7 +27,10 @@ VOID Monitor( _In_ VOID *Context )
     NT_ASSERT( KeGetCurrentProcessorNumber( ) != mw::MONITOR_THREAD_CPU_AFFINITY );
 
     ULONG64 CountIdentifiedWrites = 0llu;
-    ULONG64 CountCFSet = 0llu;
+
+    alignas(64) const auto Address = static_cast< mw::MONITOR_CONTEXT* >(
+        Context
+    )->MonitoredAddress;
 
     for ( ;; )
     {
@@ -84,7 +81,7 @@ VOID Monitor( _In_ VOID *Context )
          *
          *  I've only tested the previous assumptions on an AMD Ryzen 3 systems.
          *
-         *  Interestingly, Intel with the instruction `umwait`, appears to behave differently:
+         *  Interestingly, Intel with the instruction `umwait` appears to behave differently:
          *
          *  "By executing the umwait instruction, the core enters a light-weight sleep
          *  mode, typically C0.1 or C0.2 [34]. There are now two cases
@@ -100,11 +97,8 @@ VOID Monitor( _In_ VOID *Context )
          *  a microarchitectural event, i.e., a transient write."
          */
 
-        const auto cf = ( __readeflags ( ) & 1 ) != 0;
         const ULONG64 Previous = MostRecentRead;
         MostRecentRead = *reinterpret_cast< ULONG_PTR* >( Address );
-
-        if ( cf ) CountCFSet++;
 
         if ( Previous != MostRecentRead )
         {
@@ -125,7 +119,7 @@ VOID Monitor( _In_ VOID *Context )
         }
     }
 
-    logmsg( "Count identified writes: %llu Count CF: %llu\n", CountIdentifiedWrites, CountCFSet );
+    logmsg( "Count identified writes: %llu\n", CountIdentifiedWrites );
 }
 
 
